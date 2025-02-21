@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>炎のグルコースマンランナー〜怒りの鉄拳〜</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #87CEEB; }
+        #gameCanvas { display: block; margin: 0 auto; }
+        #startScreen, #gameOverScreen {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            text-align: center; background: rgba(0, 0, 0, 0.7); color: white;
+            padding: 20px; border-radius: 10px; display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="startScreen">
+        <h1>炎のグルコースマンランナー〜怒りの鉄拳〜</h1>
+        <p>左右キーで移動、スペースキーでジャンプ！</p>
+        <p>敵を踏むと7点、コインを取ると5点！落とし穴に気をつけて！</p>
+        <p>スペースキーで開始！</p>
+    </div>
+    <div id="gameOverScreen">
+        <h1>ゲームオーバー</h1>
+        <p>スコア: <span id="finalScore">0</span></p>
+        <p>ハイスコア: <span id="highScore">0</span></p>
+        <p>スペースキーでリプレイ</p>
+    </div>
+    <!-- BGMと効果音 -->
+    <audio id="startBgm" loop>
+        <source src="start-bgm.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="playBgm" loop>
+        <source src="play-bgm.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="jumpSe">
+        <source src="jump-se.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="itemSe">
+        <source src="item-se.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="enemySe">
+        <source src="enemy-se.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="deathSe">
+        <source src="death-se.mp3" type="audio/mpeg">
+    </audio>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const startScreen = document.getElementById('startScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const finalScoreElement = document.getElementById('finalScore');
+        const highScoreElement = document.getElementById('highScore');
+        const startBgm = document.getElementById('startBgm');
+        const playBgm = document.getElementById('playBgm');
+        const jumpSe = document.getElementById('jumpSe');
+        const itemSe = document.getElementById('itemSe');
+        const enemySe = document.getElementById('enemySe');
+        const deathSe = document.getElementById('deathSe');
+
+        let gameState = 'start';
+        let score = 0;
+        let highScore = localStorage.getItem('highScore') ? parseInt(localStorage.getItem('highScore')) : 0;
+        let cameraX = 0;
+
+        let player = {
+            x: 400, y: 500, width: 64, height: 64, velocityX: 0, velocityY: 0,
+            isJumping: false, jumpsLeft: 2, invulnerable: false, invulnerableTimer: 0,
+            headColor: '#800080', hatColor: '#008000', shirtColor: '#FFFF00',
+            pantsColor: '#0000FF', shoesColor: '#8B4513', eyeColor: '#000000',
+            mouthColor: '#FF0000'
+        };
+
+        let backgrounds = [
+            { x: 0, y: 0, width: 1600, height: 400, color: '#87CEEB' },
+            { x: 0, y: 400, width: 1600, height: 200, color: '#228B22' },
+            { x: 0, y: 300, width: 1600, height: 100, color: '#808080' },
+            { x: 100, y: 200, width: 200, height: 100, color: '#FFFFFF' },
+            { x: 500, y: 150, width: 300, height: 140, color: '#FFFFFF' },
+            { x: 900, y: 180, width: 240, height: 120, color: '#FFFFFF' }
+        ];
+
+        let obstacles = [], items = [], enemies = [], holes = [];
+        let obstacleTimer = 0, itemTimer = 0, enemyTimer = 0, holeTimer = 0;
+        let keys = { left: false, right: false };
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function update() {
+            if (gameState === 'playing') {
+                player.velocityX = keys.left ? -3 : keys.right ? 3 : 0;
+                player.x += player.velocityX;
+                cameraX = player.x - 400;
+                if (cameraX < 0) cameraX = 0;
+
+                if (player.isJumping) {
+                    player.velocityY += 0.5;
+                    player.y += player.velocityY;
+                    if (player.y >= 500) {
+                        player.y = 500;
+                        player.isJumping = false;
+                        player.velocityY = 0;
+                        player.jumpsLeft = 2;
+                    }
+                }
+
+                if (player.invulnerable) {
+                    player.invulnerableTimer--;
+                    if (player.invulnerableTimer <= 0) player.invulnerable = false;
+                }
+
+                obstacleTimer++;
+                if (obstacleTimer > 300) {
+                    obstacles.push({ x: cameraX + 800, y: 500, width: 64, height: 64, color: '#808080' });
+                    obstacleTimer = 0;
+                }
+
+                itemTimer++;
+                if (itemTimer > 450) {
+                    items.push({ x: cameraX + 800, y: 450, width: 32, height: 32, color: '#FFD700' });
+                    itemTimer = 0;
+                }
+
+                enemyTimer++;
+                if (enemyTimer > 600) {
+                    enemies.push({ x: cameraX + 800, y: 500, width: 64, height: 64, color: '#8B4513', eyeColor: '#000000', mouthColor: '#FF0000' });
+                    enemyTimer = 0;
+                }
+
+                holeTimer++;
+                if (holeTimer > 600) {
+                    holes.push({ x: cameraX + 800, y: 500, width: 64, height: 200, color: '#000000' });
+                    holeTimer = 0;
+                }
+
+                obstacles.forEach(obstacle => obstacle.x -= 0.5);
+                items.forEach(item => item.x -= 0.5);
+                enemies.forEach(enemy => enemy.x -= 0.5);
+                holes.forEach(hole => hole.x -= 0.5);
+
+                obstacles.forEach((obstacle, index) => {
+                    if (player.x < obstacle.x + obstacle.width && player.x + player.width > obstacle.x &&
+                        player.y < obstacle.y + obstacle.height && player.y + player.height > obstacle.y) {
+                        if (!player.invulnerable) {
+                            gameState = 'gameover';
+                            playBgm.pause();
+                            deathSe.play();
+                            updateGameOver();
+                        }
+                    }
+                });
+
+                enemies.forEach((enemy, index) => {
+                    if (player.y + player.height <= enemy.y && player.velocityY > 0 &&
+                        player.x + player.width > enemy.x && player.x < enemy.x + enemy.width) {
+                        enemies.splice(index, 1);
+                        score += 7;
+                        player.velocityY = -12;
+                        enemySe.play();
+                    } else if (player.x < enemy.x + enemy.width && player.x + player.width > enemy.x &&
+                               player.y < enemy.y + enemy.height && player.y + player.height > enemy.y) {
+                        if (!player.invulnerable) {
+                            gameState = 'gameover';
+                            playBgm.pause();
+                            deathSe.play();
+                            updateGameOver();
+                        }
+                    }
+                });
+
+                items = items.filter(item => {
+                    if (player.x < item.x + item.width && player.x + player.width > item.x &&
+                        player.y < item.y + item.height && player.y + player.height > item.y) {
+                        score += 5;
+                        itemSe.play();
+                        return false;
+                    }
+                    return true;
+                });
+
+                holes.forEach(hole => {
+                    if (player.x < hole.x + hole.width && player.x + player.width > hole.x &&
+                        player.y + player.height > hole.y) {
+                        player.y += 5;
+                        if (player.y > 600) {
+                            gameState = 'gameover';
+                            playBgm.pause();
+                            deathSe.play();
+                            updateGameOver();
+                        }
+                    }
+                });
+
+                score += 0.05;
+
+                obstacles = obstacles.filter(obstacle => obstacle.x + obstacle.width > cameraX);
+                items = items.filter(item => item.x + item.width > cameraX);
+                enemies = enemies.filter(enemy => enemy.x + enemy.width > cameraX);
+                holes = holes.filter(hole => hole.x + hole.width > cameraX);
+            }
+        }
+
+        function updateGameOver() {
+            if (score > highScore) {
+                highScore = Math.floor(score);
+                localStorage.setItem('highScore', highScore);
+            }
+            finalScoreElement.textContent = Math.floor(score);
+            highScoreElement.textContent = highScore;
+            gameOverScreen.style.display = 'block';
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState === 'start') {
+                startScreen.style.display = 'block';
+                startBgm.play();
+                playBgm.pause();
+            } else if (gameState === 'playing') {
+                startScreen.style.display = 'none';
+                startBgm.pause();
+                playBgm.play();
+                drawBackground();
+                drawPlayer();
+                drawObstacles();
+                drawItems();
+                drawEnemies();
+                drawHoles();
+                drawScore();
+            } else if (gameState === 'gameover') {
+                startScreen.style.display = 'none';
+                startBgm.pause();
+                playBgm.pause();
+            }
+        }
+
+        function drawBackground() {
+            backgrounds.forEach(bg => {
+                ctx.fillStyle = bg.color;
+                ctx.fillRect(bg.x - cameraX, bg.y, bg.width, bg.height);
+            });
+        }
+
+        function drawPlayer() {
+            ctx.fillStyle = player.headColor;
+            ctx.fillRect(player.x - cameraX + 16, player.y - 32, 32, 32);
+            ctx.fillStyle = player.hatColor;
+            ctx.fillRect(player.x - cameraX + 16, player.y - 48, 32, 16);
+            ctx.fillStyle = player.shirtColor;
+            ctx.fillRect(player.x - cameraX, player.y, player.width, 32);
+            ctx.fillStyle = player.pantsColor;
+            ctx.fillRect(player.x - cameraX, player.y + 32, player.width, 32);
+            ctx.fillStyle = player.shoesColor;
+            ctx.fillRect(player.x - cameraX, player.y + 64, player.width, 16);
+            ctx.fillStyle = player.headColor;
+            ctx.fillRect(player.x - cameraX - 16, player.y, 16, 32);
+            ctx.fillRect(player.x - cameraX + player.width, player.y, 16, 32);
+            ctx.fillStyle = player.eyeColor;
+            ctx.fillRect(player.x - cameraX + 24, player.y - 24, 8, 8);
+            ctx.fillRect(player.x - cameraX + 40, player.y - 24, 8, 8);
+            ctx.fillStyle = player.mouthColor;
+            ctx.fillRect(player.x - cameraX + 28, player.y - 8, 16, 8);
+        }
+
+        function drawObstacles() {
+            obstacles.forEach(obstacle => {
+                ctx.fillStyle = obstacle.color;
+                ctx.fillRect(obstacle.x - cameraX, obstacle.y, obstacle.width, obstacle.height);
+                ctx.fillStyle = '#606060';
+                ctx.fillRect(obstacle.x - cameraX + 16, obstacle.y + 16, 32, 32);
+            });
+        }
+
+        function drawItems() {
+            items.forEach(item => {
+                ctx.fillStyle = item.color;
+                ctx.beginPath();
+                ctx.arc(item.x - cameraX + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                ctx.fillStyle = enemy.color;
+                ctx.fillRect(enemy.x - cameraX, enemy.y, enemy.width, enemy.height);
+                ctx.fillStyle = enemy.eyeColor;
+                ctx.fillRect(enemy.x - cameraX + 16, enemy.y + 16, 8, 8);
+                ctx.fillRect(enemy.x - cameraX + 40, enemy.y + 16, 8, 8);
+                ctx.fillStyle = enemy.mouthColor;
+                ctx.fillRect(enemy.x - cameraX + 24, enemy.y + 40, 16, 8);
+            });
+        }
+
+        function drawHoles() {
+            holes.forEach(hole => {
+                ctx.fillStyle = hole.color;
+                ctx.fillRect(hole.x - cameraX, hole.y, hole.width, hole.height);
+            });
+        }
+
+        function drawScore() {
+            ctx.fillStyle = '#000';
+            ctx.font = '24px Arial';
+            ctx.fillText(`スコア: ${Math.floor(score)}`, 10, 30);
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                if (gameState === 'start') {
+                    gameState = 'playing';
+                    startScreen.style.display = 'none';
+                    resetGame();
+                    gameLoop();
+                } else if (gameState === 'gameover') {
+                    gameState = 'playing';
+                    gameOverScreen.style.display = 'none';
+                    resetGame();
+                    gameLoop();
+                } else if (gameState === 'playing' && player.jumpsLeft > 0) {
+                    if (!player.isJumping) {
+                        player.isJumping = true;
+                        player.velocityY = -12;
+                    } else {
+                        player.velocityY = -12;
+                    }
+                    player.jumpsLeft -= 1;
+                    player.invulnerable = true;
+                    player.invulnerableTimer = 10;
+                    jumpSe.currentTime = 0;
+                    jumpSe.play();
+                }
+            } else if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+                keys.left = true;
+            } else if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+                keys.right = true;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = false;
+            if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
+        });
+
+        function resetGame() {
+            player.x = 400;
+            player.y = 500;
+            player.velocityX = 0;
+            player.velocityY = 0;
+            player.isJumping = false;
+            player.jumpsLeft = 2;
+            player.invulnerable = false;
+            cameraX = 0;
+            obstacles = [];
+            items = [];
+            enemies = [];
+            holes = [];
+            score = 0;
+            obstacleTimer = 0;
+            itemTimer = 0;
+            enemyTimer = 0;
+            holeTimer = 0;
+            startBgm.currentTime = 0;
+            playBgm.currentTime = 0;
+        }
+
+        startBgm.volume = 0.5;
+        playBgm.volume = 0.5;
+        jumpSe.volume = 0.7;
+        itemSe.volume = 0.7;
+        enemySe.volume = 0.7;
+        deathSe.volume = 0.7;
+
+        startScreen.style.display = 'block';
+    </script>
+</body>
+</html>
